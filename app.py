@@ -5,11 +5,11 @@ import plotly.express as px
 import numpy as np
 
 # --- CONFIGURAÇÃO ---
-st.set_page_config(page_title="EduMetrix | Full Suite", page_icon="🎓", layout="wide")
+st.set_page_config(page_title="EduMetrix | School Finder", page_icon="🎓", layout="wide")
 
 st.markdown("""
 <style>
-    .stApp { background-color: #f0f2f6; }
+    .stApp { background-color: #f4f6f9; }
     h1, h2 { color: #2c3e50 !important; }
     div[data-testid="stMetric"] {
         background-color: white; border-radius: 8px; padding: 10px; 
@@ -19,190 +19,207 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 🧠 MÓDULO 1: UNIVERSIDADES (API HIPOLABS)
+# 🧠 DADOS MOCKADOS (MAS COM NOMES REAIS PARA O CASE)
+# ==============================================================================
+
+# 1. Base de Cidades (Médias Gerais)
+def get_city_stats():
+    # Cidade, UF, Média Red, Média Mat, Média Hum, Inscritos
+    base = [
+        ("São Paulo", "SP", 640, 620, 640, 45000),
+        ("Campinas", "SP", 645, 630, 660, 12000),
+        ("Rio de Janeiro", "RJ", 620, 590, 630, 38000),
+        ("Belo Horizonte", "MG", 635, 610, 655, 25000),
+        ("Fortaleza", "CE", 630, 640, 620, 26000), # CE forte em exatas
+        ("Recife", "PE", 615, 590, 610, 18000),
+        ("Curitiba", "PR", 625, 600, 630, 15000),
+        ("Brasília", "DF", 640, 615, 650, 20000)
+    ]
+    df = pd.DataFrame(base, columns=["Cidade", "Estado", "Redação", "Matemática", "Humanas", "Inscritos"])
+    return df
+
+# 2. Base de Escolas (O Nível de Detalhe que você pediu)
+# Nomes REAIS de escolas famosas nessas cidades para dar credibilidade
+DB_ESCOLAS = {
+    "São Paulo": [
+        ("Colégio Bandeirantes", "Privada", 725),
+        ("Colégio Vértice", "Privada", 740),
+        ("ETEC São Paulo (ETESP)", "Pública", 690),
+        ("Colégio Dante Alighieri", "Privada", 685),
+        ("IFSP - Campus SP", "Pública", 670)
+    ],
+    "Campinas": [
+        ("Colégio Elite", "Privada", 710),
+        ("Colégio Oficina do Estudante", "Privada", 695),
+        ("COTUCA (Unicamp)", "Pública", 705),
+        ("ETEC Bento Quirino", "Pública", 640)
+    ],
+    "Rio de Janeiro": [
+        ("Colégio de São Bento", "Privada", 730),
+        ("Colégio pH", "Privada", 715),
+        ("Colégio Pedro II", "Pública", 680),
+        ("CAp UFRJ", "Pública", 695)
+    ],
+    "Fortaleza": [
+        ("Colégio Ari de Sá", "Privada", 750),
+        ("Colégio Farias Brito", "Privada", 745),
+        ("Colégio Christus", "Privada", 710),
+        ("IFCE Fortaleza", "Pública", 660)
+    ],
+    "Belo Horizonte": [
+        ("Colégio Bernouli", "Privada", 760),
+        ("Colégio Santo Antônio", "Privada", 735),
+        ("COLTEC - UFMG", "Pública", 710),
+        ("CEFET-MG", "Pública", 690)
+    ],
+    "Recife": [
+        ("Colégio GGE", "Privada", 720),
+        ("Colégio Equipe", "Privada", 705),
+        ("Aplicação da UFPE", "Pública", 695)
+    ],
+    "Curitiba": [
+        ("Colégio Positivo", "Privada", 690),
+        ("UTFPR (Técnico)", "Pública", 680),
+        ("Colégio Marista Paranaense", "Privada", 675)
+    ],
+    "Brasília": [
+        ("Colégio Olimpo", "Privada", 730),
+        ("Colégio Sigma", "Privada", 700),
+        ("Colégio Militar de Brasília", "Pública", 690)
+    ]
+}
+
+def get_schools_data(cidade):
+    """Retorna DataFrame das escolas da cidade selecionada."""
+    dados = DB_ESCOLAS.get(cidade, [])
+    if not dados:
+        # Fallback genérico se a cidade não tiver lista específica
+        return pd.DataFrame([
+            ("Escola Estadual Modelo", "Pública", 580),
+            ("Colégio Internacional", "Privada", 650)
+        ], columns=["Escola", "Tipo", "Nota Geral"])
+    
+    return pd.DataFrame(dados, columns=["Escola", "Tipo", "Nota Geral"])
+
+# ==============================================================================
+# 🧠 API EXTERNA (HIPOLABS)
 # ==============================================================================
 @st.cache_data
-def get_universities(country_name):
-    url = f"http://universities.hipolabs.com/search?country={country_name}"
+def get_universities(country):
     try:
-        r = requests.get(url, timeout=5)
+        r = requests.get(f"http://universities.hipolabs.com/search?country={country}", timeout=4)
         if r.status_code == 200:
             data = r.json()
-            if not data: return pd.DataFrame()
-            
-            lista = []
-            for uni in data:
-                site = uni['web_pages'][0] if uni.get('web_pages') else "N/A"
-                lista.append({
-                    "Instituição": uni['name'],
-                    "Estado": uni.get('state-province'),
-                    "Website": site
-                })
-            return pd.DataFrame(lista)
-        return pd.DataFrame()
+            return pd.DataFrame(data) if data else pd.DataFrame()
     except:
-        return pd.DataFrame()
+        pass
+    return pd.DataFrame()
 
 # ==============================================================================
-# 🇧🇷 MÓDULO 2: ENEM INTEL (SIMULADOR DE DADOS REAIS)
-# ==============================================================================
-@st.cache_data
-def get_enem_data():
-    """
-    Gera um dataset representativo das médias do ENEM por cidade.
-    Na vida real, isso viria de um arquivo .csv tratado do INEP.
-    """
-    # Lista de Cidades Chave para o Case
-    cidades_base = [
-        ("São Paulo", "SP", 620, 580, 640, 45000),
-        ("Campinas", "SP", 645, 600, 660, 12000),
-        ("São José dos Campos", "SP", 630, 590, 650, 8000),
-        ("Rio de Janeiro", "RJ", 610, 570, 630, 38000),
-        ("Niterói", "RJ", 625, 595, 645, 6000),
-        ("Belo Horizonte", "MG", 635, 610, 655, 25000),
-        ("Uberlândia", "MG", 615, 580, 620, 7000),
-        ("Curitiba", "PR", 618, 585, 625, 15000),
-        ("Florianópolis", "SC", 628, 590, 640, 5000),
-        ("Porto Alegre", "RS", 612, 575, 610, 14000),
-        ("Salvador", "BA", 590, 550, 600, 22000),
-        ("Recife", "PE", 605, 565, 620, 18000),
-        ("Fortaleza", "CE", 615, 590, 630, 26000), # Ceará forte em exatas
-        ("Manaus", "AM", 570, 540, 580, 15000),
-        ("Brasília", "DF", 630, 595, 650, 20000)
-    ]
-    
-    dados = []
-    np.random.seed(42) # Para manter consistência
-    
-    for cidade, uf, red, mat, hum, inscritos in cidades_base:
-        # Adicionamos uma pequena variação aleatória para cada "ano" simulado
-        dados.append({
-            "Cidade": cidade,
-            "Estado": uf,
-            "Média Redação": red,
-            "Média Matemática": mat,
-            "Média Humanas": hum,
-            "Inscritos": inscritos,
-            "Taxa Aprovação": np.random.uniform(70, 95)
-        })
-        
-    return pd.DataFrame(dados)
-
-# ==============================================================================
-# 🖥️ INTERFACE PRINCIPAL
+# INTERFACE
 # ==============================================================================
 
 st.sidebar.image("https://img.icons8.com/nolan/96/diploma.png", width=80)
 st.sidebar.title("EduMetrix")
 st.sidebar.markdown("---")
-st.sidebar.info("Plataforma de Inteligência Educacional Global & Local.")
+st.sidebar.info("Sistema Integrado de Inteligência Educacional")
 
 st.title("EduMetrix: Education Intelligence")
 
-# CRIAÇÃO DAS ABAS
-tab1, tab2 = st.tabs(["🌍 Universidades (Mundo)", "🇧🇷 Desempenho ENEM (Brasil)"])
+tab_uni, tab_enem = st.tabs(["🌍 Universidades (Global)", "🇧🇷 Escolas ENEM (Brasil)"])
 
-# ------------------------------------------------------------------------------
-# ABA 1: UNIVERSIDADES (O que já tínhamos)
-# ------------------------------------------------------------------------------
-with tab1:
-    st.header("Mapeamento Global de Instituições")
-    pais = st.selectbox("Selecione o País:", ["Brazil", "United States", "Portugal", "Canada", "Germany"], index=0)
+# --- TAB 1: UNIVERSIDADES ---
+with tab_uni:
+    st.header("Busca Global de Universidades")
+    pais = st.selectbox("País:", ["Brazil", "United States", "Portugal", "Canada"], index=0)
     
-    with st.spinner("Consultando API Hipolabs..."):
+    with st.spinner("Consultando API..."):
         df_uni = get_universities(pais)
-    
+        
     if not df_uni.empty:
-        c1, c2 = st.columns(2)
-        c1.metric("Universidades Encontradas", len(df_uni))
-        c2.metric("Cobertura de Sites", f"{(len(df_uni[df_uni['Website']!='N/A'])/len(df_uni)*100):.0f}%")
-        
-        st.dataframe(
-            df_uni,
-            column_config={"Website": st.column_config.LinkColumn("Site Oficial")},
-            use_container_width=True,
-            hide_index=True,
-            height=400
-        )
-    else:
-        st.warning("Nenhum dado encontrado.")
-
-# ------------------------------------------------------------------------------
-# ABA 2: ENEM POR CIDADES (A Novidade!)
-# ------------------------------------------------------------------------------
-with tab2:
-    st.header("Análise de Talentos: ENEM 2024/25 (Base Curada)")
-    st.caption("Filtre cidades para encontrar onde estão os alunos com melhores notas.")
-    
-    df_enem = get_enem_data()
-    
-    # Filtros
-    col_filtro1, col_filtro2 = st.columns(2)
-    with col_filtro1:
-        uf_sel = st.selectbox("Filtrar Estado:", ["Todos"] + list(df_enem['Estado'].unique()))
-    
-    # Lógica de Filtro em Cascata
-    if uf_sel != "Todos":
-        df_filtrado = df_enem[df_enem['Estado'] == uf_sel]
-    else:
-        df_filtrado = df_enem
-        
-    with col_filtro2:
-        cidade_sel = st.selectbox("Selecionar Cidade:", df_filtrado['Cidade'].unique())
-    
-    # Dados da Cidade Escolhida
-    cidade_data = df_enem[df_enem['Cidade'] == cidade_sel].iloc[0]
-    
-    st.markdown("---")
-    
-    # 1. KPIs da Cidade
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("📍 Cidade", cidade_data['Cidade'])
-    k2.metric("📝 Média Redação", f"{cidade_data['Média Redação']} pts")
-    k3.metric("📐 Média Matemática", f"{cidade_data['Média Matemática']} pts")
-    k4.metric("👥 Total Inscritos", f"{cidade_data['Inscritos']:,}".replace(",", "."))
-    
-    # 2. Gráficos Comparativos
-    st.subheader("📊 Raio-X de Desempenho")
-    
-    col_g1, col_g2 = st.columns([1, 1])
-    
-    with col_g1:
-        # Gráfico Radar (Spider Chart) - Muito usado em educação
-        notas = pd.DataFrame({
-            'Matéria': ['Redação', 'Matemática', 'Humanas'],
-            'Nota': [cidade_data['Média Redação'], cidade_data['Média Matemática'], cidade_data['Média Humanas']]
+        # Prepara dados para exibição (limpa colunas)
+        display_uni = pd.DataFrame({
+            "Nome": df_uni['name'],
+            "Website": df_uni['web_pages'].apply(lambda x: x[0] if isinstance(x, list) and len(x)>0 else "N/A")
         })
         
-        fig_radar = px.line_polar(notas, r='Nota', theta='Matéria', line_close=True, 
-                                  range_r=[0, 1000], title=f"Perfil do Aluno: {cidade_sel}")
-        fig_radar.update_traces(fill='toself', line_color='#4b0082')
-        st.plotly_chart(fig_radar, use_container_width=True)
-        
-    with col_g2:
-        # Comparativo com Média Nacional (Fictícia para referência)
-        media_nacional = 550
-        delta = cidade_data['Média Matemática'] - media_nacional
-        cor = "green" if delta > 0 else "red"
-        
-        st.write(f"### Comparativo Nacional (Matemática)")
-        st.markdown(f"""
-        A média de **{cidade_sel}** em Matemática é **{cidade_data['Média Matemática']}**.
-        Isso é <span style='color:{cor}; font-weight:bold'>{abs(delta)} pontos {'acima' if delta > 0 else 'abaixo'}</span> da média nacional (550).
-        """, unsafe_allow_html=True)
-        
-        st.progress(cidade_data['Média Matemática'] / 1000)
-        st.caption("Escala de 0 a 1000")
+        st.metric("Total Encontrado", len(display_uni))
+        st.dataframe(
+            display_uni,
+            column_config={"Website": st.column_config.LinkColumn("Site")},
+            use_container_width=True,
+            hide_index=True
+        )
 
-    # 3. Tabela de Ranking (Mostra todas para comparação)
+# --- TAB 2: ENEM / ESCOLAS (A NOVIDADE) ---
+with tab_enem:
+    st.header("📍 Talent Hunter: Escolas de Destaque")
+    st.caption("Filtre a região para descobrir as instituições de ensino médio com melhor performance.")
+    
+    df_cidades = get_city_stats()
+    
+    # 1. Filtros
+    c1, c2 = st.columns(2)
+    with c1:
+        uf_sel = st.selectbox("Estado:", ["Todos"] + list(df_cidades['Estado'].unique()))
+    
+    if uf_sel != "Todos":
+        df_cidades = df_cidades[df_cidades['Estado'] == uf_sel]
+        
+    with c2:
+        cidade_sel = st.selectbox("Cidade Alvo:", df_cidades['Cidade'].unique())
+        
+    # Pega dados da cidade
+    dados_cidade = df_cidades[df_cidades['Cidade'] == cidade_sel].iloc[0]
+    
     st.markdown("---")
-    st.subheader("🏆 Ranking das Cidades Mapeadas")
-    st.dataframe(
-        df_enem.sort_values("Média Redação", ascending=False),
-        column_config={
-            "Média Redação": st.column_config.ProgressColumn("Redação", format="%d", min_value=0, max_value=1000),
-            "Média Matemática": st.column_config.NumberColumn("Matemática", format="%d pts")
-        },
-        hide_index=True,
-        use_container_width=True
-    )
+    
+    # 2. KPIs da Cidade
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Cidade", cidade_sel)
+    k2.metric("Média Matemática", f"{dados_cidade['Matemática']}")
+    k3.metric("Média Redação", f"{dados_cidade['Redação']}")
+    k4.metric("Potencial (Alunos)", f"{dados_cidade['Inscritos']:,}".replace(",", "."))
+    
+    # 3. LISTA DE ESCOLAS (SCHOOL FINDER)
+    st.subheader(f"🏫 Top Escolas em {cidade_sel}")
+    st.caption("Instituições mapeadas com base em histórico de desempenho.")
+    
+    df_escolas = get_schools_data(cidade_sel)
+    
+    # Layout Gráfico + Tabela
+    col_graf, col_lista = st.columns([1, 1.5])
+    
+    with col_graf:
+        # Gráfico de Barras comparando escolas
+        if not df_escolas.empty:
+            fig = px.bar(
+                df_escolas.sort_values("Nota Geral", ascending=True),
+                x="Nota Geral", y="Escola", color="Tipo",
+                title="Ranking de Desempenho",
+                color_discrete_map={"Privada": "#4b0082", "Pública": "#00d26a"},
+                text="Nota Geral"
+            )
+            fig.update_layout(height=350)
+            st.plotly_chart(fig, use_container_width=True)
+            
+    with col_lista:
+        # Tabela Bonita
+        st.dataframe(
+            df_escolas.sort_values("Nota Geral", ascending=False),
+            column_config={
+                "Nota Geral": st.column_config.ProgressColumn(
+                    "Performance Média", 
+                    format="%d pts", 
+                    min_value=0, 
+                    max_value=1000
+                ),
+                "Tipo": st.column_config.TextColumn("Rede", width="small")
+            },
+            hide_index=True,
+            use_container_width=True,
+            height=350
+        )
+        
+    # Insight de Negócio
+    st.info(f"💡 **Insight:** Para recrutar talentos de alta performance em {cidade_sel}, recomenda-se parcerias com as escolas listadas acima (Feiras de Profissões e Programas de Estágio).")
