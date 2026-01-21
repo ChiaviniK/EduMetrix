@@ -1,213 +1,151 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import requests
 import plotly.express as px
-import plotly.graph_objects as go
-from sklearn.linear_model import LinearRegression
 
-# --- Configuração GovTech ---
-st.set_page_config(page_title="EduMetrix | GovTech", page_icon="🏛️", layout="wide")
+# --- CONFIGURAÇÃO ---
+st.set_page_config(page_title="EduMetrix | Global Intelligence", page_icon="🎓", layout="wide")
 
 st.markdown("""
 <style>
-    /* Estilo Governo Digital (Azul Marinho, Cinza, Branco) */
-    .stApp { background-color: #f8f9fa; color: #333333; }
-    h1, h2, h3 { color: #003366 !important; font-family: 'Segoe UI', sans-serif; }
-    
-    /* Cards de Métricas */
+    .stApp { background-color: #f8f9fa; color: #333; }
+    h1 { color: #4b0082 !important; font-family: 'Arial', sans-serif; }
     div[data-testid="stMetric"] {
-        background-color: #ffffff;
-        border-radius: 8px;
-        border-left: 5px solid #003366;
-        padding: 15px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-    }
-    
-    /* Botões */
-    .stButton>button {
-        background-color: #003366; color: white; border-radius: 4px; border: none;
+        background-color: white; border-radius: 10px; padding: 15px;
+        border-left: 5px solid #4b0082; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
     }
 </style>
 """, unsafe_allow_html=True)
 
-# --- INTEGRAÇÃO API IBGE (REAL-TIME) ---
+# --- FUNÇÃO DE COLETA (API REAL) ---
 @st.cache_data
-def get_ibge_states():
-    """Busca lista de estados reais na API do IBGE"""
-    url = "https://servicodados.ibge.gov.br/api/v1/localidades/estados"
+def get_universities(country_name):
+    """
+    Busca lista real de universidades na API Hipolabs.
+    Não requer chave de API.
+    """
+    # URL da API Pública
+    url = f"http://universities.hipolabs.com/search?country={country_name}"
+    
     try:
-        response = requests.get(url)
-        df = pd.DataFrame(response.json())
-        return df[['sigla', 'nome', 'id']].sort_values('nome')
-    except:
-        return pd.DataFrame({'sigla': ['SP', 'RJ'], 'nome': ['São Paulo', 'Rio de Janeiro']})
-
-@st.cache_data
-def get_ibge_cities(uf_id):
-    """Busca cidades de um estado na API do IBGE"""
-    url = f"https://servicodados.ibge.gov.br/api/v1/localidades/estados/{uf_id}/municipios"
-    try:
-        response = requests.get(url)
-        df = pd.DataFrame(response.json())
-        return df[['nome', 'id']]
-    except:
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            
+            # Se não achar nada (ex: digitou país errado)
+            if not data: return pd.DataFrame()
+            
+            # Tratamento de Dados (ETL)
+            lista_limpa = []
+            for uni in data:
+                # A API retorna domínios e sites como listas, pegamos o primeiro item
+                site = uni['web_pages'][0] if uni.get('web_pages') else "N/A"
+                dominio = uni['domains'][0] if uni.get('domains') else "N/A"
+                
+                lista_limpa.append({
+                    "Instituição": uni['name'],
+                    "País": uni['country'],
+                    "Sigla_País": uni['alpha_two_code'],
+                    "Website": site,
+                    "Domínio": dominio,
+                    "Estado/Província": uni.get('state-province') # Nem sempre preenchido pela API
+                })
+            
+            return pd.DataFrame(lista_limpa)
+        else:
+            return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Erro de conexão: {e}")
         return pd.DataFrame()
 
-# --- GERADOR DE DADOS EDUCACIONAIS (MOCK AVANÇADO) ---
-# Simula o Microdado do INEP processado (já que é inviável baixar 5GB aqui)
-def generate_school_data(city_name, n_schools=50):
-    np.random.seed(42)
-    
-    data = []
-    types = ['Pública (Municipal)', 'Pública (Estadual)', 'Privada']
-    
-    for _ in range(n_schools):
-        tipo = np.random.choice(types, p=[0.5, 0.4, 0.1])
-        
-        # Criação do ISE (Índice Socioeconômico) - Escala 1 a 10
-        # Privadas tem ISE maior
-        base_ise = 7.0 if tipo == 'Privada' else 4.0
-        ise = np.clip(np.random.normal(base_ise, 1.5), 1, 10)
-        
-        # Nota esperada baseada no ISE (Correlação forte)
-        # Nota = Base + (Fator * ISE) + Ruído
-        expected_score = 400 + (30 * ise) + np.random.normal(0, 20)
-        
-        # ADICIONANDO OUTLIERS (O "Milagre" ou o "Desastre")
-        # Eficiência = O quanto a escola performa ACIMA do esperado para o ISE dela
-        efficiency = np.random.normal(0, 15) 
-        
-        # Algumas escolas públicas pobres com gestão excelente (Milagres)
-        if tipo != 'Privada' and ise < 4 and np.random.random() > 0.9:
-            efficiency += 60 # Boost enorme
-            
-        final_score = expected_score + efficiency
-        
-        data.append({
-            'Escola': f"Escola {np.random.randint(100,999)} {city_name}",
-            'Rede': tipo,
-            'ISE_Medio': round(ise, 2), # Nível socioeconômico dos alunos
-            'Nota_IDEB': round(final_score / 100, 1), # Simulando IDEB
-            'Nota_ENEM': round(final_score, 0),
-            'Valor_Adicionado': round(efficiency, 2) # A métrica chave
-        })
-    
-    return pd.DataFrame(data)
-
 # --- SIDEBAR ---
-states_df = get_ibge_states()
-
 with st.sidebar:
-    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/2/23/Brazil_State_of_S%C3%A3o_Paulo_COA.svg/1200px-Brazil_State_of_S%C3%A3o_Paulo_COA.svg.png", width=60)
+    st.image("https://img.icons8.com/nolan/96/university.png", width=80)
     st.title("EduMetrix")
-    st.caption("Sistema de Monitoramento da Eficiência Escolar")
-    
+    st.caption("Intelligence Acadêmica")
     st.markdown("---")
     
-    # Filtro Dinâmico via API IBGE
-    uf_select = st.selectbox("Selecione o Estado (API IBGE):", states_df['sigla'])
+    # Filtro de País (Com sugestões)
+    pais_selecionado = st.selectbox(
+        "🌍 Selecione o País:",
+        ["Brazil", "United States", "Portugal", "United Kingdom", "Canada", "Germany", "Argentina", "Japan"],
+        index=0
+    )
     
-    # Pega ID do estado para buscar cidades
-    uf_id = states_df[states_df['sigla'] == uf_select]['id'].values[0]
-    cities_df = get_ibge_cities(uf_id)
-    
-    if not cities_df.empty:
-        city_select = st.selectbox("Selecione o Município:", cities_df['nome'])
-    else:
-        city_select = "Exemplo"
-
-    st.markdown("---")
-    st.info("Modelo de Valor Adicionado: Regressão Linear (ISE x Nota)")
-
-# --- CARGA DE DADOS ---
-df_schools = generate_school_data(city_select)
-
-# --- ANÁLISE ESTATÍSTICA (O CÉREBRO) ---
-# Calculando a Linha de Tendência (O Esperado)
-X = df_schools[['ISE_Medio']]
-y = df_schools[['Nota_ENEM']]
-model = LinearRegression().fit(X, y)
-df_schools['Nota_Esperada'] = model.predict(X)
-df_schools['Delta_Performance'] = df_schools['Nota_ENEM'] - df_schools['Nota_Esperada']
-
-# Classificação
-def classify_school(row):
-    if row['Delta_Performance'] > 40: return "💎 Superação (Outlier Positivo)"
-    if row['Delta_Performance'] < -40: return "⚠️ Alerta Crítico (Ineficiente)"
-    return "Dentro do Esperado"
-
-df_schools['Status'] = df_schools.apply(classify_school, axis=1)
+    st.info("Fonte: Hipolabs University Data")
 
 # --- DASHBOARD ---
-st.title(f"Diagnóstico Educacional: {city_select}/{uf_select}")
+st.title(f"Mapeamento Acadêmico: {pais_selecionado}")
 
-# KPIs
-col1, col2, col3, col4 = st.columns(4)
-media_enem = df_schools['Nota_ENEM'].mean()
-media_ise = df_schools['ISE_Medio'].mean()
-n_superacao = len(df_schools[df_schools['Status'].str.contains("Superação")])
+with st.spinner(f"Buscando instituições em {pais_selecionado}..."):
+    df = get_universities(pais_selecionado)
 
-with col1: st.metric("Média ENEM (Geral)", f"{media_enem:.0f}")
-with col2: st.metric("ISE Médio (Renda)", f"{media_ise:.1f}", help="Índice de Nível Socioeconômico (1-10)")
-with col3: st.metric("Escolas 'Milagre'", n_superacao, delta="Alta Eficiência", delta_color="normal")
-with col4: st.metric("Distorção IDH", f"R²: {model.score(X, y):.2f}", help="Quanto a renda explica a nota (R²)")
+if not df.empty:
+    
+    # 1. KPIs
+    col1, col2, col3 = st.columns(3)
+    
+    total_unis = len(df)
+    total_sites = df[df['Website'] != "N/A"].shape[0]
+    # Conta quantos domínios terminam em .edu ou .br (Exemplo de análise)
+    sufixo_comum = df['Domínio'].apply(lambda x: x.split('.')[-1]).mode()[0]
+    
+    col1.metric("Instituições Mapeadas", total_unis)
+    col2.metric("Presença Digital (Sites)", f"{total_sites}", f"{(total_sites/total_unis)*100:.0f}% Cobertura")
+    col3.metric("Sufixo de Domínio Comum", f".{sufixo_comum}")
+    
+    st.markdown("---")
+    
+    # 2. GRÁFICOS E ANÁLISE
+    c_chart, c_table = st.columns([1, 2])
+    
+    with c_chart:
+        st.subheader("📊 Distribuição")
+        
+        # Se o país tiver dados de Estado/Província preenchidos (EUA/Brasil costumam ter)
+        # Vamos contar por estado. Se tudo for None, mostramos aviso.
+        
+        # Limpeza para gráfico: Troca None por "Não Informado"
+        df_chart = df.copy()
+        df_chart['Estado/Província'] = df_chart['Estado/Província'].fillna("Geral / Não Informado")
+        
+        contagem_estados = df_chart['Estado/Província'].value_counts().reset_index()
+        contagem_estados.columns = ['Região', 'Qtd']
+        
+        # Só mostra gráfico se tivermos mais de 1 região diferente
+        if len(contagem_estados) > 1:
+            fig = px.pie(contagem_estados.head(10), values='Qtd', names='Região', title="Top 10 Regiões", hole=0.4)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Dados de regionalização (Estados) não disponíveis para este país na API.")
+            st.caption("Analisando apenas lista federal.")
 
-st.markdown("---")
+    with c_table:
+        st.subheader("🏫 Diretório de Universidades")
+        
+        # Campo de busca textual
+        busca = st.text_input("🔍 Buscar Instituição:", placeholder="Ex: Federal, Harvard, Tecnológica...")
+        
+        if busca:
+            df_display = df[df['Instituição'].str.contains(busca, case=False)]
+        else:
+            df_display = df
+            
+        # Tabela Interativa com Links
+        st.dataframe(
+            df_display[['Instituição', 'Estado/Província', 'Website']],
+            column_config={
+                "Website": st.column_config.LinkColumn("Portal Oficial"),
+                "Instituição": st.column_config.TextColumn("Nome", width="medium")
+            },
+            hide_index=True,
+            use_container_width=True,
+            height=400
+        )
 
-# GRÁFICO AVANÇADO DE DISPERSÃO (SCATTER PLOT)
-# É aqui que o especialista vê valor. Quem está ACIMA da linha é bom, quem está ABAIXO é ruim.
-st.subheader("🔍 Matriz de Equidade: Renda vs. Aprendizado")
-st.caption("A linha representa o desempenho esperado para cada nível de renda. Escolas acima da linha geram Valor Adicionado positivo.")
+    # 3. DOWNLOAD
+    csv = df.to_csv(index=False).encode('utf-8')
+    st.download_button("📥 Baixar Relatório (CSV)", csv, f"universities_{pais_selecionado}.csv", "text/csv")
 
-fig = px.scatter(
-    df_schools, 
-    x="ISE_Medio", 
-    y="Nota_ENEM", 
-    color="Status", 
-    size="Nota_IDEB",
-    hover_name="Escola",
-    trendline="ols", # Adiciona a linha de regressão
-    color_discrete_map={
-        "💎 Superação (Outlier Positivo)": "#00cc99",
-        "Dentro do Esperado": "#3366cc",
-        "⚠️ Alerta Crítico (Ineficiente)": "#ff3333"
-    }
-)
-fig.update_layout(
-    xaxis_title="Nível Socioeconômico (ISE)",
-    yaxis_title="Nota Média ENEM",
-    template="plotly_white",
-    height=500
-)
-st.plotly_chart(fig, use_container_width=True)
-
-# TABELA DE GESTÃO
-st.subheader("📋 Escolas Prioritárias para Intervenção")
-col_tab1, col_tab2 = st.columns(2)
-
-with col_tab1:
-    st.markdown("**💎 Escolas Modelo (Benchmarking)**")
-    st.dataframe(
-        df_schools[df_schools['Delta_Performance'] > 0]
-        .sort_values('Delta_Performance', ascending=False)
-        .head(5)[['Escola', 'Rede', 'Nota_ENEM', 'Delta_Performance']],
-        use_container_width=True,
-        hide_index=True
-    )
-
-with col_tab2:
-    st.markdown("**⚠️ Escolas em Risco (Abaixo do Esperado)**")
-    st.dataframe(
-        df_schools[df_schools['Delta_Performance'] < 0]
-        .sort_values('Delta_Performance', ascending=True)
-        .head(5)[['Escola', 'Rede', 'Nota_ENEM', 'Delta_Performance']],
-        use_container_width=True,
-        hide_index=True
-    )
-
-# DOWNLOAD AREA
-st.markdown("---")
-st.info("Microdados processados com a metodologia de Valor Adicionado (V.A.).")
-csv = df_schools.to_csv().encode('utf-8')
-st.download_button("📥 Baixar Relatório Técnico (CSV)", csv, "relatorio_equidade.csv", "text/csv")
+else:
+    st.error("Nenhuma universidade encontrada ou erro na API. Tente outro país (em inglês).")
