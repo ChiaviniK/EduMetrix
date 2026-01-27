@@ -4,12 +4,11 @@ import requests
 import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
-from datetime import datetime
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="EduMetrix | Intelligence Suite", page_icon="🎓", layout="wide")
 
-# --- ESTILIZAÇÃO CSS CUSTOMIZADA ---
+# --- ESTILIZAÇÃO ---
 st.markdown("""
 <style>
     .stApp { background-color: #f8f9fa; }
@@ -44,20 +43,30 @@ def get_enem_analytics_data():
 def generate_microdados_equidade():
     """Gera Microdados Socioeconômicos para o desafio de ETL."""
     np.random.seed(42)
-    n = 2000
-    locais = [("São Paulo", "SP"), ("Rio de Janeiro", "RJ"), ("Fortaleza", "CE"), ("Belo Horizonte", "MG")]
+    n = 2500
+    locais = [("São Paulo", "SP"), ("Rio de Janeiro", "RJ"), ("Fortaleza", "CE"), ("Belo Horizonte", "MG"), ("Manaus", "AM")]
     
     dados = []
     for _ in range(n):
         cidade, uf = locais[np.random.randint(0, len(locais))]
         perfil = np.random.choice(['Baixo', 'Medio', 'Alto'], p=[0.4, 0.4, 0.2])
         
+        # Lógica de distribuição socioeconômica
         if perfil == 'Baixo':
-            renda, mae, nota_base = np.random.choice(['A', 'B']), np.random.choice(['A', 'B']), 450
+            renda = np.random.choice(['A', 'B'])     # Sem renda ou até 1 sal. min
+            mae = np.random.choice(['A', 'B'])       # Mãe sem estudo ou fund. incomp
+            internet = np.random.choice(['Não', 'Sim'], p=[0.4, 0.6]) # 40% sem net
+            nota_base = 460
         elif perfil == 'Medio':
-            renda, mae, nota_base = np.random.choice(['C', 'D']), np.random.choice(['D', 'F']), 600
-        else:
-            renda, mae, nota_base = np.random.choice(['E', 'Q']), np.random.choice(['F', 'G']), 740
+            renda = np.random.choice(['C', 'D'])
+            mae = np.random.choice(['D', 'F'])
+            internet = 'Sim'
+            nota_base = 610
+        else: # Alto
+            renda = np.random.choice(['E', 'Q'])
+            mae = np.random.choice(['F', 'G'])
+            internet = 'Sim'
+            nota_base = 730
             
         dados.append({
             "ID_Inscricao": np.random.randint(1000000000, 9999999999),
@@ -65,6 +74,7 @@ def generate_microdados_equidade():
             "SG_UF": uf,
             "Q006_Renda": renda,
             "Q002_Esc_Mae": mae,
+            "Q025_Tem_Internet": internet, # <--- ADICIONADO AQUI
             "NU_NOTA_GERAL": max(0, min(1000, int(np.random.normal(nota_base, 80))))
         })
     return pd.DataFrame(dados)
@@ -93,7 +103,7 @@ def get_world_unis(country):
 
 st.sidebar.image("https://img.icons8.com/nolan/96/diploma.png", width=80)
 st.sidebar.title("EduMetrix")
-st.sidebar.caption("v7.0 | Education BI")
+st.sidebar.caption("v7.1 | Education BI")
 st.sidebar.markdown("---")
 
 tab_enem, tab_equidade, tab_ibge, tab_world = st.tabs([
@@ -131,24 +141,43 @@ with tab_equidade:
     df_raw = generate_microdados_equidade()
     
     st.subheader("1. Extração de Microdados (Raw)")
-    st.dataframe(df_raw.head(5), use_container_width=True)
+    # Mostra a nova coluna na prévia
+    st.dataframe(df_raw[['ID_Inscricao', 'NO_MUNICIPIO', 'Q006_Renda', 'Q025_Tem_Internet']].head(), use_container_width=True)
+    
     st.download_button("📥 Baixar Microdados Brutos (.csv)", df_raw.to_csv(index=False).encode('utf-8'), "enem_raw.csv")
     
     st.markdown("---")
     if st.checkbox("🔄 Executar Transformação (Pipeline ETL)"):
-        df_etl = df_raw.copy()
-        # Mapeamento Numérico (A Renda 'A' significa Nenhuma Renda = 0 pts)
-        mapa_renda = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'Q': 5}
-        mapa_esc = {'A': 0, 'B': 1, 'D': 2, 'F': 3, 'G': 4}
-        
-        df_etl['ISE'] = df_etl['Q006_Renda'].map(mapa_renda) + df_etl['Q002_Esc_Mae'].map(mapa_esc).fillna(0)
-        
-        st.success("✅ ETL Concluído: Coluna 'ISE' gerada com sucesso.")
-        
-        fig_eq = px.scatter(df_etl, x="ISE", y="NU_NOTA_GERAL", color="NO_MUNICIPIO", 
-                           title="Correlação: Índice Socioeconômico vs Nota Final",
-                           trendline="ols")
-        st.plotly_chart(fig_eq, use_container_width=True)
+        with st.spinner("Processando dados qualitativos..."):
+            df_etl = df_raw.copy()
+            
+            # 1. Mapeamento Renda (0 a 5 pts)
+            mapa_renda = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'Q': 5}
+            
+            # 2. Mapeamento Escolaridade Mãe (0 a 4 pts)
+            mapa_esc = {'A': 0, 'B': 1, 'D': 2, 'F': 3, 'G': 4}
+            
+            # 3. Mapeamento Internet (0 ou 1 pt) - <--- LÓGICA CORRIGIDA AQUI
+            df_etl['Score_Internet'] = df_etl['Q025_Tem_Internet'].apply(lambda x: 1 if x == 'Sim' else 0)
+            
+            # Cálculo Final do ISE (Soma simples)
+            df_etl['ISE'] = df_etl['Q006_Renda'].map(mapa_renda) + \
+                            df_etl['Q002_Esc_Mae'].map(mapa_esc).fillna(0) + \
+                            df_etl['Score_Internet']
+            
+            st.success("✅ ETL Concluído: Coluna 'ISE' gerada com sucesso.")
+            
+            # Gráfico de Dispersão
+            fig_eq = px.scatter(
+                df_etl, 
+                x="ISE", 
+                y="NU_NOTA_GERAL", 
+                color="NO_MUNICIPIO", 
+                title="Correlação: Índice Socioeconômico (ISE) vs Nota Final",
+                labels={"ISE": "Índice Socioeconômico (0=Vulnerável, 10=Privilegiado)"},
+                trendline="ols"
+            )
+            st.plotly_chart(fig_eq, use_container_width=True)
 
 # --- TAB 3: EXTRATOR IBGE (API REAL) ---
 with tab_ibge:
@@ -156,9 +185,12 @@ with tab_ibge:
     uf = st.selectbox("Selecione a UF para Extração:", ["SP", "RJ", "MG", "CE", "BA", "RS"])
     if st.button("📡 Buscar Municípios"):
         df_ibge = get_ibge_api(uf)
-        st.success(f"Encontrados {len(df_ibge)} municípios.")
-        st.dataframe(df_ibge, use_container_width=True)
-        st.download_button("📥 Baixar Lista IBGE", df_ibge.to_csv(index=False).encode('utf-8'), f"ibge_{uf}.csv")
+        if not df_ibge.empty:
+            st.success(f"Encontrados {len(df_ibge)} municípios.")
+            st.dataframe(df_ibge, use_container_width=True)
+            st.download_button("📥 Baixar Lista IBGE", df_ibge.to_csv(index=False).encode('utf-8'), f"ibge_{uf}.csv")
+        else:
+            st.error("Erro na API do IBGE.")
 
 # --- TAB 4: UNIVERSIDADES (API GLOBAL) ---
 with tab_world:
