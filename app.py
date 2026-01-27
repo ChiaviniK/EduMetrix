@@ -27,7 +27,7 @@ st.markdown("""
 
 @st.cache_data
 def get_enem_analytics_data():
-    """Retorna a base de inteligência consolidada (Simulado Realista)."""
+    """Retorna a base de inteligência consolidada (Analytics)."""
     data = [
         {"Cidade": "São Paulo", "UF": "SP", "Redação": 660, "Mat": 645, "Hum": 620, "Nat": 610, "Inscritos": 45000},
         {"Cidade": "Rio de Janeiro", "UF": "RJ", "Redação": 650, "Mat": 620, "Hum": 625, "Nat": 590, "Inscritos": 38000},
@@ -41,21 +41,27 @@ def get_enem_analytics_data():
 
 @st.cache_data
 def generate_microdados_equidade():
-    """Gera Microdados Socioeconômicos para o desafio de ETL."""
+    """
+    Gera Microdados com as colunas EXATAS solicitadas:
+    [ID_Inscricao, municipio, Q006_Renda, Q002_Escolaridade_Mae, Q025_Tem_Internet, NU_NOTA_GERAL]
+    """
     np.random.seed(42)
     n = 2500
-    locais = [("São Paulo", "SP"), ("Rio de Janeiro", "RJ"), ("Fortaleza", "CE"), ("Belo Horizonte", "MG"), ("Manaus", "AM")]
+    
+    # Lista de cidades (usada internamente para gerar a coluna 'municipio')
+    locais = ["São Paulo", "Rio de Janeiro", "Fortaleza", "Belo Horizonte", "Manaus"]
     
     dados = []
     for _ in range(n):
-        cidade, uf = locais[np.random.randint(0, len(locais))]
+        cidade = np.random.choice(locais)
+        
+        # Define perfil para criar correlação realista
         perfil = np.random.choice(['Baixo', 'Medio', 'Alto'], p=[0.4, 0.4, 0.2])
         
-        # Lógica de distribuição socioeconômica
         if perfil == 'Baixo':
-            renda = np.random.choice(['A', 'B'])     # Sem renda ou até 1 sal. min
-            mae = np.random.choice(['A', 'B'])       # Mãe sem estudo ou fund. incomp
-            internet = np.random.choice(['Não', 'Sim'], p=[0.4, 0.6]) # 40% sem net
+            renda = np.random.choice(['A', 'B'])
+            mae = np.random.choice(['A', 'B'])
+            internet = np.random.choice(['Não', 'Sim'], p=[0.4, 0.6])
             nota_base = 460
         elif perfil == 'Medio':
             renda = np.random.choice(['C', 'D'])
@@ -70,14 +76,16 @@ def generate_microdados_equidade():
             
         dados.append({
             "ID_Inscricao": np.random.randint(1000000000, 9999999999),
-            "NO_MUNICIPIO": cidade,
-            "SG_UF": uf,
+            "municipio": cidade,  # <--- CORRIGIDO
             "Q006_Renda": renda,
-            "Q002_Esc_Mae": mae,
-            "Q025_Tem_Internet": internet, # <--- ADICIONADO AQUI
+            "Q002_Escolaridade_Mae": mae, # <--- CORRIGIDO
+            "Q025_Tem_Internet": internet, # <--- INCLUÍDO
             "NU_NOTA_GERAL": max(0, min(1000, int(np.random.normal(nota_base, 80))))
         })
-    return pd.DataFrame(dados)
+    
+    # Retorna DataFrame com a ordem exata das colunas pedidas
+    cols_order = ["ID_Inscricao", "municipio", "Q006_Renda", "Q002_Escolaridade_Mae", "Q025_Tem_Internet", "NU_NOTA_GERAL"]
+    return pd.DataFrame(dados)[cols_order]
 
 @st.cache_data
 def get_ibge_api(uf):
@@ -90,7 +98,7 @@ def get_ibge_api(uf):
 
 @st.cache_data
 def get_world_unis(country):
-    """Conecta na API Global Hipolabs Universities."""
+    """Conecta na API Global Hipolabs."""
     try:
         url = f"http://universities.hipolabs.com/search?country={country}"
         r = requests.get(url, timeout=5)
@@ -103,27 +111,23 @@ def get_world_unis(country):
 
 st.sidebar.image("https://img.icons8.com/nolan/96/diploma.png", width=80)
 st.sidebar.title("EduMetrix")
-st.sidebar.caption("v7.1 | Education BI")
+st.sidebar.caption("v7.2 | Final")
 st.sidebar.markdown("---")
 
 tab_enem, tab_equidade, tab_ibge, tab_world = st.tabs([
     "📊 ENEM Analytics", "⚖️ Projeto Equidade", "📥 Extrator IBGE", "🌍 Universidades"
 ])
 
-# --- TAB 1: ANALYTICS (DADOS CURADOS) ---
+# --- TAB 1: ANALYTICS ---
 with tab_enem:
     st.header("Inteligência de Desempenho Regional")
     df_analytics = get_enem_analytics_data()
-    
     cidade_sel = st.selectbox("Selecione a Cidade:", df_analytics['Cidade'].unique())
     dado = df_analytics[df_analytics['Cidade'] == cidade_sel].iloc[0]
-    
     col_m, col_r = st.columns([1, 2])
     with col_m:
         st.metric("Média Matemática", dado['Mat'], f"{dado['Mat']-540}")
         st.metric("Média Redação", dado['Redação'], f"{dado['Redação']-590}")
-        st.caption("Deltas vs Média Nacional")
-        
     with col_r:
         fig_radar = go.Figure(go.Scatterpolar(
             r=[dado['Mat'], dado['Redação'], dado['Hum'], dado['Nat']],
@@ -138,61 +142,65 @@ with tab_equidade:
     st.header("Desafio de Equidade: ETL Socioeconômico")
     st.markdown("Transforme dados qualitativos do questionário em um Índice Socioeconômico (ISE).")
     
+    # Gera dados com as colunas corrigidas
     df_raw = generate_microdados_equidade()
     
     st.subheader("1. Extração de Microdados (Raw)")
-    # Mostra a nova coluna na prévia
-    st.dataframe(df_raw[['ID_Inscricao', 'NO_MUNICIPIO', 'Q006_Renda', 'Q025_Tem_Internet']].head(), use_container_width=True)
+    st.dataframe(df_raw.head(), use_container_width=True)
     
-    st.download_button("📥 Baixar Microdados Brutos (.csv)", df_raw.to_csv(index=False).encode('utf-8'), "enem_raw.csv")
+    st.download_button(
+        label="📥 Baixar Microdados Brutos (.csv)",
+        data=df_raw.to_csv(index=False).encode('utf-8'),
+        file_name="microdados_enem_equidade.csv",
+        mime="text/csv"
+    )
     
     st.markdown("---")
     if st.checkbox("🔄 Executar Transformação (Pipeline ETL)"):
         with st.spinner("Processando dados qualitativos..."):
             df_etl = df_raw.copy()
             
-            # 1. Mapeamento Renda (0 a 5 pts)
+            # --- LÓGICA DE TRANSFORMAÇÃO ---
+            
+            # 1. Renda (Q006_Renda)
             mapa_renda = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'Q': 5}
             
-            # 2. Mapeamento Escolaridade Mãe (0 a 4 pts)
+            # 2. Mãe (Q002_Escolaridade_Mae) - Nome Corrigido
             mapa_esc = {'A': 0, 'B': 1, 'D': 2, 'F': 3, 'G': 4}
             
-            # 3. Mapeamento Internet (0 ou 1 pt) - <--- LÓGICA CORRIGIDA AQUI
+            # 3. Internet (Q025_Tem_Internet)
             df_etl['Score_Internet'] = df_etl['Q025_Tem_Internet'].apply(lambda x: 1 if x == 'Sim' else 0)
             
-            # Cálculo Final do ISE (Soma simples)
+            # Cálculo do ISE
             df_etl['ISE'] = df_etl['Q006_Renda'].map(mapa_renda) + \
-                            df_etl['Q002_Esc_Mae'].map(mapa_esc).fillna(0) + \
+                            df_etl['Q002_Escolaridade_Mae'].map(mapa_esc).fillna(0) + \
                             df_etl['Score_Internet']
             
-            st.success("✅ ETL Concluído: Coluna 'ISE' gerada com sucesso.")
+            st.success("✅ ETL Concluído: Coluna 'ISE' gerada.")
             
-            # Gráfico de Dispersão
+            # Gráfico usando a coluna 'municipio' corrigida
             fig_eq = px.scatter(
                 df_etl, 
                 x="ISE", 
                 y="NU_NOTA_GERAL", 
-                color="NO_MUNICIPIO", 
-                title="Correlação: Índice Socioeconômico (ISE) vs Nota Final",
-                labels={"ISE": "Índice Socioeconômico (0=Vulnerável, 10=Privilegiado)"},
+                color="municipio", 
+                title="Correlação: ISE vs Nota Final por Município",
                 trendline="ols"
             )
             st.plotly_chart(fig_eq, use_container_width=True)
 
-# --- TAB 3: EXTRATOR IBGE (API REAL) ---
+# --- TAB 3: EXTRATOR IBGE ---
 with tab_ibge:
     st.header("Conexão Governamental: API IBGE")
-    uf = st.selectbox("Selecione a UF para Extração:", ["SP", "RJ", "MG", "CE", "BA", "RS"])
+    uf = st.selectbox("Selecione a UF:", ["SP", "RJ", "MG", "CE", "BA", "RS"])
     if st.button("📡 Buscar Municípios"):
         df_ibge = get_ibge_api(uf)
         if not df_ibge.empty:
             st.success(f"Encontrados {len(df_ibge)} municípios.")
             st.dataframe(df_ibge, use_container_width=True)
             st.download_button("📥 Baixar Lista IBGE", df_ibge.to_csv(index=False).encode('utf-8'), f"ibge_{uf}.csv")
-        else:
-            st.error("Erro na API do IBGE.")
 
-# --- TAB 4: UNIVERSIDADES (API GLOBAL) ---
+# --- TAB 4: UNIVERSIDADES ---
 with tab_world:
     st.header("Mapeamento Acadêmico Global")
     pais = st.selectbox("País:", ["Brazil", "United States", "Portugal", "Canada"])
@@ -202,4 +210,4 @@ with tab_world:
         st.dataframe(df_uni[['name', 'Site']], column_config={"Site": st.column_config.LinkColumn("Website")}, use_container_width=True)
 
 st.markdown("---")
-st.markdown('<div class="footer">EduMetrix Suite • Inteligência Educacional baseada em Microdados Reais</div>', unsafe_allow_html=True)
+st.markdown('<div class="footer">EduMetrix Suite • Inteligência Educacional</div>', unsafe_allow_html=True)
