@@ -8,8 +8,16 @@ import numpy as np
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="EduMetrix | Full Data", page_icon="🎓", layout="wide")
 
-# ... (Mantenha o CSS e as funções de API/Analytics iguais) ...
-
+st.markdown("""
+<style>
+    .stApp { background-color: #f8f9fa; }
+    h1, h2 { color: #2c3e50 !important; }
+    div[data-testid="stMetric"] {
+        background-color: white; border-radius: 8px; padding: 10px; 
+        border-left: 5px solid #6f42c1; box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+</style>
+""", unsafe_allow_html=True)
 # ==============================================================================
 # ATUALIZAÇÃO: GERADOR DE MICRODADOS COM GEOLOCALIZAÇÃO
 # ==============================================================================
